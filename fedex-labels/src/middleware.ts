@@ -20,27 +20,36 @@ export async function middleware(req: NextRequest) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.redirect(new URL('/', req.url))
+  const { data: { user }, error } = await supabase.auth.getUser()
+  
+  console.log('Middleware - pathname:', pathname)
+  console.log('Middleware - user:', user?.id, 'error:', error?.message)
+
+  if (!user) {
+    console.log('Middleware - no user, redirecting to /')
+    return NextResponse.redirect(new URL('/', req.url))
+  }
 
   const adminClient = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const { data: profile } = await adminClient
+  const { data: profile, error: profileError } = await adminClient
     .from('profiles')
     .select('role')
     .eq('id', user.id)
     .single()
 
-  console.log('Middleware profile:', user.id, profile)
+  console.log('Middleware - profile:', profile, 'error:', profileError?.message)
 
   const role = profile?.role
 
   if (pathname.startsWith('/admin') && role !== 'admin') {
+    console.log('Middleware - not admin, role is:', role)
     return NextResponse.redirect(new URL('/', req.url))
   }
+
   if (pathname.startsWith('/reseller') && role !== 'reseller' && role !== 'admin') {
     return NextResponse.redirect(new URL('/', req.url))
   }
