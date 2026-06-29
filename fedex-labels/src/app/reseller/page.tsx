@@ -58,10 +58,12 @@ export default function ResellerPage() {
   }, [])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (!data.user) { router.push('/'); return }
+    const run = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { router.push('/'); return }
       fetchOrders()
-    })
+    }
+    run()
   }, [router, fetchOrders])
 
   const downloadExcel = async (order: Order) => {
@@ -180,7 +182,8 @@ export default function ResellerPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 32 }}>
             {pending.map(order => (
               <div key={order.id} style={{
-                background: 'var(--bg-surface)', border: `1px solid ${order.is_bulk ? 'rgba(139,92,246,0.3)' : 'rgba(59,130,246,0.25)'}`,
+                background: 'var(--bg-surface)',
+                border: `1px solid ${order.is_bulk ? 'rgba(139,92,246,0.3)' : 'rgba(59,130,246,0.25)'}`,
                 borderRadius: 12, padding: '20px 22px',
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
