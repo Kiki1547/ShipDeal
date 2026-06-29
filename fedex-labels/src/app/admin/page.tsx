@@ -76,10 +76,7 @@ export default function AdminPage() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) { router.push('/'); return }
-      supabase.from('profiles').select('role').eq('id', session.user.id).single().then(({ data: profile }) => {
-        if (profile?.role !== 'admin') { router.push('/'); return }
-        fetchData()
-      })
+      fetchData()
     })
   }, [router, fetchData])
 
