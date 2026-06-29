@@ -46,22 +46,18 @@ const ROLE_CONFIG = {
 type Tab = 'orders' | 'users'
 
 export default function AdminPage() {
-  const [mounted, setMounted] = useState(false)
-  const [authorized, setAuthorized] = useState(false)
+  const [status, setStatus] = useState<'loading' | 'authorized' | 'unauthorized'>('loading')
   const [tab, setTab] = useState<Tab>('orders')
   const [orders, setOrders] = useState<Order[]>([])
   const [users, setUsers] = useState<Profile[]>([])
   const [resellers, setResellers] = useState<Profile[]>([])
-  const [loading, setLoading] = useState(true)
+  const [dataLoading, setDataLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const router = useRouter()
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
-    const token = session.access_token
+  const fetchData = useCallback(async (token: string) => {
+    setDataLoading(true)
     const [ordersRes, usersRes] = await Promise.all([
       fetch('/api/admin/orders', { headers: { Authorization: `Bearer ${token}` } }),
       fetch('/api/admin/users', { headers: { Authorization: `Bearer ${token}` } }),
@@ -72,71 +68,90 @@ export default function AdminPage() {
       setUsers(data.users)
       setResellers(data.users.filter((u: Profile) => u.role === 'reseller' || u.role === 'admin'))
     }
-    setLoading(false)
+    setDataLoading(false)
   }, [])
 
   useEffect(() => {
-    setMounted(true)
-  }, [])
-
-  useEffect(() => {
-    if (!mounted) return
-    const checkAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) { router.push('/'); return }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!session) {
+        setStatus('unauthorized')
+        return
+      }
       const { data: profile } = await supabase
         .from('profiles')
         .select('role')
         .eq('id', session.user.id)
         .single()
-      if (profile?.role !== 'admin') { router.push('/'); return }
-      setAuthorized(true)
-      fetchData()
+
+      if (profile?.role === 'admin') {
+        setStatus('authorized')
+        fetchData(session.access_token)
+      } else {
+        setStatus('unauthorized')
+      }
+    })
+    return () => subscription.unsubscribe()
+  }, [fetchData])
+
+  useEffect(() => {
+    if (status === 'unauthorized') {
+      router.push('/')
     }
-    checkAuth()
-  }, [mounted, router, fetchData])
+  }, [status, router])
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    return session?.access_token || ''
+  }
 
   const updateRole = async (userId: string, newRole: string) => {
     setActionLoading(userId)
-    const { data: { session } } = await supabase.auth.getSession()
+    const token = await getToken()
     await fetch('/api/admin/users', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ userId, role: newRole }),
     })
-    await fetchData()
+    fetchData(token)
     setActionLoading(null)
   }
 
   const assignOrder = async (orderId: string, resellerId: string) => {
     setActionLoading(orderId)
-    const { data: { session } } = await supabase.auth.getSession()
+    const token = await getToken()
     await fetch('/api/admin/orders', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ orderId, assignedTo: resellerId || null }),
     })
-    await fetchData()
+    fetchData(token)
     setActionLoading(null)
   }
 
   const deleteUser = async (userId: string) => {
     if (!confirm('Delete this user? This cannot be undone.')) return
     setActionLoading(userId)
-    const { data: { session } } = await supabase.auth.getSession()
+    const token = await getToken()
     await fetch(`/api/admin/users?userId=${userId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${session?.access_token}` },
+      headers: { Authorization: `Bearer ${token}` },
     })
-    await fetchData()
+    fetchData(token)
     setActionLoading(null)
   }
 
-  // Show nothing until mounted and auth checked
-  if (!mounted || !authorized) {
+  if (status === 'loading') {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading...</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Checking permissions...</div>
+      </div>
+    )
+  }
+
+  if (status === 'unauthorized') {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Redirecting...</div>
       </div>
     )
   }
@@ -161,7 +176,6 @@ export default function AdminPage() {
     <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: 24 }}>
       <div style={{ maxWidth: 1100, margin: '0 auto' }}>
 
-        {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
@@ -180,7 +194,7 @@ export default function AdminPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={fetchData} style={{ padding: '8px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button onClick={async () => fetchData(await getToken())} style={{ padding: '8px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
               <RefreshCw size={13} /> Refresh
             </button>
             <button onClick={async () => { await supabase.auth.signOut(); router.push('/') }} style={{ padding: '8px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -189,7 +203,6 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {/* Stats */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 28 }} className="stats-grid">
           {[
             { label: 'Total orders', value: stats.total, icon: <Package size={16} color="var(--accent)" /> },
@@ -207,7 +220,6 @@ export default function AdminPage() {
           ))}
         </div>
 
-        {/* Tabs */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
           <button onClick={() => setTab('orders')} style={btnStyle(tab === 'orders')}>
             <Package size={14} style={{ display: 'inline', marginRight: 6 }} />Orders
@@ -217,7 +229,6 @@ export default function AdminPage() {
           </button>
         </div>
 
-        {/* ORDERS TAB */}
         {tab === 'orders' && (
           <div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -237,7 +248,7 @@ export default function AdminPage() {
               ))}
             </div>
 
-            {loading ? (
+            {dataLoading ? (
               <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Loading...</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -257,15 +268,12 @@ export default function AdminPage() {
                           {order.weight_kg < 1 ? `${(order.weight_kg * 1000).toFixed(0)}g` : `${order.weight_kg}kg`} · #{order.id.slice(0, 8).toUpperCase()} · {new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         </div>
                       </div>
-
                       <span style={{ fontSize: 15, fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)' }}>
                         ${order.price_usd.toFixed(2)}
                       </span>
-
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, background: cfg.bg, color: cfg.color, fontSize: 12, fontWeight: 500 }}>
                         {cfg.icon} {cfg.label}
                       </div>
-
                       <div style={{ position: 'relative' }}>
                         <select
                           value={order.assigned_to || ''}
@@ -284,7 +292,6 @@ export default function AdminPage() {
                         </select>
                         <ChevronDown size={12} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
                       </div>
-
                       {order.label_url && (
                         <a href={order.label_url} target="_blank" rel="noopener noreferrer" style={{
                           display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px',
@@ -305,10 +312,9 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* USERS TAB */}
         {tab === 'users' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {loading ? (
+            {dataLoading ? (
               <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Loading...</div>
             ) : users.map(user => {
               const roleCfg = ROLE_CONFIG[user.role]
@@ -323,18 +329,15 @@ export default function AdminPage() {
                       {user.email?.[0]?.toUpperCase()}
                     </span>
                   </div>
-
                   <div style={{ flex: 1, minWidth: 180 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>{user.email}</div>
                     <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
                       Joined {new Date(user.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                     </div>
                   </div>
-
                   <div style={{ padding: '4px 10px', borderRadius: 6, background: roleCfg.bg, color: roleCfg.color, fontSize: 12, fontWeight: 600 }}>
                     {roleCfg.label}
                   </div>
-
                   <div style={{ position: 'relative' }}>
                     <select
                       value={user.role}
@@ -351,7 +354,6 @@ export default function AdminPage() {
                     </select>
                     <UserCog size={12} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
                   </div>
-
                   <button onClick={() => deleteUser(user.id)} disabled={actionLoading === user.id} style={{
                     padding: '7px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)',
                     borderRadius: 7, color: '#EF4444', cursor: 'pointer', display: 'flex', alignItems: 'center'
@@ -361,7 +363,7 @@ export default function AdminPage() {
                 </div>
               )
             })}
-            {!loading && users.length === 0 && (
+            {!dataLoading && users.length === 0 && (
               <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)', fontSize: 14 }}>No users found</div>
             )}
           </div>
