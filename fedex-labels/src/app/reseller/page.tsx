@@ -3,7 +3,16 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Package, Upload, CheckCircle, Clock, RefreshCw, LogOut, ArrowLeft, X, Loader2 } from 'lucide-react'
+import { Package, Upload, CheckCircle, Clock, RefreshCw, LogOut, ArrowLeft, X, Loader2, Download } from 'lucide-react'
+
+interface Recipient {
+  weight_kg: number
+  recipient_name: string
+  recipient_address: string
+  recipient_city: string
+  recipient_zip: string
+  recipient_country: string
+}
 
 interface Order {
   id: string
@@ -16,6 +25,8 @@ interface Order {
   recipient_city: string
   recipient_country: string
   recipient_zip: string
+  is_bulk: boolean
+  bulk_recipients: Recipient[] | null
   created_at: string
 }
 
@@ -53,22 +64,37 @@ export default function ResellerPage() {
     })
   }, [router, fetchOrders])
 
+  const downloadExcel = async (order: Order) => {
+    const XLSX = await import('xlsx')
+    const recipients = order.bulk_recipients || []
+    const data = recipients.map((r, i) => ({
+      '#': i + 1,
+      'Nom': r.recipient_name,
+      'Adresse': r.recipient_address,
+      'Ville': r.recipient_city,
+      'Code postal': r.recipient_zip,
+      'Pays': r.recipient_country,
+      'Poids': r.weight_kg < 1 ? `${(r.weight_kg * 1000).toFixed(0)}g` : `${r.weight_kg}kg`,
+    }))
+    const ws = XLSX.utils.json_to_sheet(data)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Labels')
+    XLSX.writeFile(wb, `shipdeal-order-${order.id.slice(0, 8)}.xlsx`)
+  }
+
   const handleUpload = async () => {
     if (!uploadModal || !pdfFile) return
     setUploading(true)
     setUploadError('')
     try {
       const { data: { session } } = await supabase.auth.getSession()
-
       const fileName = `${uploadModal.id}-${Date.now()}.pdf`
       const { error: uploadErr } = await supabase.storage
         .from('labels')
         .upload(fileName, pdfFile, { contentType: 'application/pdf', upsert: true })
       if (uploadErr) throw new Error(uploadErr.message)
-
       const { data: urlData } = supabase.storage.from('labels').getPublicUrl(fileName)
       const labelUrl = urlData.publicUrl
-
       const res = await fetch('/api/reseller/upload-label', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
@@ -154,27 +180,53 @@ export default function ResellerPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 32 }}>
             {pending.map(order => (
               <div key={order.id} style={{
-                background: 'var(--bg-surface)', border: '1px solid rgba(59,130,246,0.25)',
+                background: 'var(--bg-surface)', border: `1px solid ${order.is_bulk ? 'rgba(139,92,246,0.3)' : 'rgba(59,130,246,0.25)'}`,
                 borderRadius: 12, padding: '20px 22px',
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 4 }}>#{order.id.slice(0, 8).toUpperCase()}</div>
-                    <InfoRow label="Nom" value={order.recipient_name} />
-                    <InfoRow label="Adresse" value={order.recipient_address} />
-                    <InfoRow label="Ville" value={order.recipient_city} />
-                    <InfoRow label="Code postal" value={order.recipient_zip} />
-                    <InfoRow label="Pays" value={order.recipient_country} />
-                    <InfoRow label="Poids" value={order.weight_kg < 1 ? `${(order.weight_kg * 1000).toFixed(0)} g` : `${order.weight_kg} kg`} />
-                    <InfoRow label="Prix" value={`$${order.price_usd.toFixed(2)}`} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>#{order.id.slice(0, 8).toUpperCase()}</div>
+                      {order.is_bulk && (
+                        <div style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(139,92,246,0.15)', color: '#8B5CF6', fontSize: 11, fontWeight: 600 }}>
+                          BULK — {order.bulk_recipients?.length || 0} labels
+                        </div>
+                      )}
+                    </div>
+                    {order.is_bulk ? (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                        {order.bulk_recipients?.length} recipients · ${order.price_usd.toFixed(2)} total
+                      </div>
+                    ) : (
+                      <>
+                        <InfoRow label="Nom" value={order.recipient_name} />
+                        <InfoRow label="Adresse" value={order.recipient_address} />
+                        <InfoRow label="Ville" value={order.recipient_city} />
+                        <InfoRow label="Code postal" value={order.recipient_zip} />
+                        <InfoRow label="Pays" value={order.recipient_country} />
+                        <InfoRow label="Poids" value={order.weight_kg < 1 ? `${(order.weight_kg * 1000).toFixed(0)} g` : `${order.weight_kg} kg`} />
+                        <InfoRow label="Prix" value={`$${order.price_usd.toFixed(2)}`} />
+                      </>
+                    )}
                   </div>
-                  <button onClick={() => { setUploadModal(order); setPdfFile(null); setUploadError('') }} style={{
-                    padding: '10px 18px', background: '#8B5CF6', border: 'none',
-                    borderRadius: 8, color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 600,
-                    display: 'flex', alignItems: 'center', gap: 7, alignSelf: 'flex-start'
-                  }}>
-                    <Upload size={14} /> Upload label
-                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+                    {order.is_bulk && (
+                      <button onClick={() => downloadExcel(order)} style={{
+                        padding: '9px 16px', background: 'rgba(0,212,170,0.1)', border: '1px solid rgba(0,212,170,0.2)',
+                        borderRadius: 8, color: '#00D4AA', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                        display: 'flex', alignItems: 'center', gap: 6
+                      }}>
+                        <Download size={14} /> Download Excel
+                      </button>
+                    )}
+                    <button onClick={() => { setUploadModal(order); setPdfFile(null); setUploadError('') }} style={{
+                      padding: '9px 16px', background: '#8B5CF6', border: 'none',
+                      borderRadius: 8, color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                      display: 'flex', alignItems: 'center', gap: 6
+                    }}>
+                      <Upload size={14} /> Upload label
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -192,11 +244,29 @@ export default function ResellerPage() {
                   justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10
                 }}>
                   <div>
-                    <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{order.recipient_name} — {order.recipient_city}, {order.recipient_country}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>#{order.id.slice(0, 8).toUpperCase()}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>
+                        {order.is_bulk ? `Bulk — ${order.bulk_recipients?.length} labels` : `${order.recipient_name} — ${order.recipient_city}`}
+                      </div>
+                      {order.is_bulk && (
+                        <div style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(139,92,246,0.15)', color: '#8B5CF6', fontSize: 11, fontWeight: 600 }}>BULK</div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>#{order.id.slice(0, 8).toUpperCase()} · ${order.price_usd.toFixed(2)}</div>
                   </div>
-                  <div style={{ padding: '4px 10px', borderRadius: 6, background: 'rgba(0,212,170,0.1)', color: '#00D4AA', fontSize: 12, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <CheckCircle size={12} /> Label delivered
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {order.is_bulk && (
+                      <button onClick={() => downloadExcel(order)} style={{
+                        padding: '6px 12px', background: 'rgba(0,212,170,0.1)', border: '1px solid rgba(0,212,170,0.2)',
+                        borderRadius: 7, color: '#00D4AA', cursor: 'pointer', fontSize: 12, fontWeight: 500,
+                        display: 'flex', alignItems: 'center', gap: 5
+                      }}>
+                        <Download size={12} /> Excel
+                      </button>
+                    )}
+                    <div style={{ padding: '4px 10px', borderRadius: 6, background: 'rgba(0,212,170,0.1)', color: '#00D4AA', fontSize: 12, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <CheckCircle size={12} /> Label delivered
+                    </div>
                   </div>
                 </div>
               ))}
@@ -222,13 +292,21 @@ export default function ResellerPage() {
               </button>
             </div>
 
-            <div style={{ background: 'var(--bg-elevated)', borderRadius: 10, padding: 16, marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <InfoRow label="Nom" value={uploadModal.recipient_name} />
-              <InfoRow label="Adresse" value={uploadModal.recipient_address} />
-              <InfoRow label="Ville" value={uploadModal.recipient_city} />
-              <InfoRow label="Code postal" value={uploadModal.recipient_zip} />
-              <InfoRow label="Pays" value={uploadModal.recipient_country} />
-              <InfoRow label="Poids" value={uploadModal.weight_kg < 1 ? `${(uploadModal.weight_kg * 1000).toFixed(0)} g` : `${uploadModal.weight_kg} kg`} />
+            <div style={{ background: 'var(--bg-elevated)', borderRadius: 10, padding: 16, marginBottom: 20 }}>
+              {uploadModal.is_bulk ? (
+                <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>
+                  Bulk order — <strong style={{ color: 'var(--text)' }}>{uploadModal.bulk_recipients?.length} labels</strong> · ${uploadModal.price_usd.toFixed(2)}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  <InfoRow label="Nom" value={uploadModal.recipient_name} />
+                  <InfoRow label="Adresse" value={uploadModal.recipient_address} />
+                  <InfoRow label="Ville" value={uploadModal.recipient_city} />
+                  <InfoRow label="Code postal" value={uploadModal.recipient_zip} />
+                  <InfoRow label="Pays" value={uploadModal.recipient_country} />
+                  <InfoRow label="Poids" value={uploadModal.weight_kg < 1 ? `${(uploadModal.weight_kg * 1000).toFixed(0)} g` : `${uploadModal.weight_kg} kg`} />
+                </div>
+              )}
             </div>
 
             <label style={{
