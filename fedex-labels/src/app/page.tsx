@@ -1,331 +1,356 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
-import type { User } from '@supabase/supabase-js'
-import Navbar from '@/components/Navbar'
-import AuthModal from '@/components/AuthModal'
-import OrderModal from '@/components/OrderModal'
-import BulkOrderModal from '@/components/BulkOrderModal'
-import { PRICING_TIERS, getPriceForWeight } from '@/lib/pricing'
-import { Package, Zap, Shield, Clock, ChevronDown, ArrowRight, CheckCircle } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { Package, Upload, CheckCircle, Clock, RefreshCw, LogOut, ArrowLeft, X, Loader2, Download } from 'lucide-react'
 
-export default function HomePage() {
-  const [user, setUser] = useState<User | null>(null)
-  const [authOpen, setAuthOpen] = useState(false)
-  const [orderOpen, setOrderOpen] = useState(false)
-  const [bulkOpen, setBulkOpen] = useState(false)
-  const [previewWeight, setPreviewWeight] = useState(1.0)
-  const heroRef = useRef<HTMLDivElement>(null)
+interface Recipient {
+  weight_kg: number
+  recipient_name: string
+  recipient_address: string
+  recipient_city: string
+  recipient_zip: string
+  recipient_country: string
+}
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUser(data.user))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
-      setUser(session?.user ?? null)
+interface Order {
+  id: string
+  weight_kg: number
+  price_usd: number
+  status: 'pending_payment' | 'paid' | 'label_ready' | 'cancelled'
+  label_url: string | null
+  recipient_name: string
+  recipient_address: string
+  recipient_city: string
+  recipient_country: string
+  recipient_zip: string
+  is_bulk: boolean
+  bulk_recipients: Recipient[] | null
+  created_at: string
+}
+
+const InfoRow = ({ label, value }: { label: string, value: string }) => (
+  <div style={{ display: 'flex', gap: 8 }}>
+    <span style={{ fontSize: 13, color: 'var(--text-dim)', minWidth: 90 }}>{label} :</span>
+    <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>{value}</span>
+  </div>
+)
+
+export default function ResellerPage() {
+  const [orders, setOrders] = useState<Order[]>([])
+  const [loading, setLoading] = useState(true)
+  const [uploadModal, setUploadModal] = useState<Order | null>(null)
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const router = useRouter()
+
+  const fetchOrders = useCallback(async () => {
+    setLoading(true)
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return
+    const res = await fetch('/api/reseller/orders', {
+      headers: { Authorization: `Bearer ${session.access_token}` }
     })
-    return () => subscription.unsubscribe()
+    if (res.ok) setOrders(await res.json().then((d: { orders: Order[] }) => d.orders))
+    setLoading(false)
   }, [])
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    setUser(null)
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (!data.user) { router.push('/'); return }
+      fetchOrders()
+    })
+  }, [router, fetchOrders])
+
+  const downloadExcel = async (order: Order) => {
+    const XLSX = await import('xlsx')
+    const recipients = order.bulk_recipients || []
+    const data = recipients.map((r, i) => ({
+      '#': i + 1,
+      'Nom': r.recipient_name,
+      'Adresse': r.recipient_address,
+      'Ville': r.recipient_city,
+      'Code postal': r.recipient_zip,
+      'Pays': r.recipient_country,
+      'Poids': r.weight_kg < 1 ? `${(r.weight_kg * 1000).toFixed(0)}g` : `${r.weight_kg}kg`,
+    }))
+    const ws = XLSX.utils.json_to_sheet(data)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Labels')
+    XLSX.writeFile(wb, `shipdeal-order-${order.id.slice(0, 8)}.xlsx`)
   }
 
-  const handleOrderClick = () => {
-    if (user) setOrderOpen(true)
-    else setAuthOpen(true)
+  const handleUpload = async () => {
+    if (!uploadModal || !pdfFile) return
+    setUploading(true)
+    setUploadError('')
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const fileName = `${uploadModal.id}-${Date.now()}.pdf`
+      const { error: uploadErr } = await supabase.storage
+        .from('labels')
+        .upload(fileName, pdfFile, { contentType: 'application/pdf', upsert: true })
+      if (uploadErr) throw new Error(uploadErr.message)
+      const { data: urlData } = supabase.storage.from('labels').getPublicUrl(fileName)
+      const labelUrl = urlData.publicUrl
+      const res = await fetch('/api/reseller/upload-label', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ orderId: uploadModal.id, labelUrl }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setUploadModal(null)
+      setPdfFile(null)
+      fetchOrders()
+    } catch (err: unknown) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setUploading(false)
+    }
   }
 
-  const previewPrice = getPriceForWeight(previewWeight)
+  const pending = orders.filter(o => o.status === 'paid')
+  const done = orders.filter(o => o.status === 'label_ready')
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
-      <Navbar user={user} onSignIn={() => setAuthOpen(true)} onSignOut={handleSignOut} />
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: 24 }}>
+      <div style={{ maxWidth: 900, margin: '0 auto' }}>
 
-      {/* ─── HERO ─── */}
-      <section ref={heroRef} style={{
-        minHeight: '100vh', display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-        padding: '120px 24px 80px', position: 'relative', overflow: 'hidden'
-      }}>
-        <div style={{
-          position: 'absolute', inset: 0,
-          backgroundImage: `linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px)`,
-          backgroundSize: '48px 48px',
-          maskImage: 'radial-gradient(ellipse 80% 60% at 50% 40%, black 30%, transparent 100%)',
-          opacity: 0.4
-        }} />
-        <div style={{
-          position: 'absolute', top: '30%', left: '50%', transform: 'translate(-50%,-50%)',
-          width: 600, height: 400, borderRadius: '50%',
-          background: 'radial-gradient(ellipse, rgba(255,107,0,0.12) 0%, transparent 70%)',
-          pointerEvents: 'none'
-        }} />
-
-        <div style={{ position: 'relative', maxWidth: 720, textAlign: 'center' }}>
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            background: 'var(--accent-dim)', border: '1px solid var(--accent-glow)',
-            borderRadius: 100, padding: '6px 16px', marginBottom: 28
-          }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', animation: 'pulse 2s infinite' }} />
-            <span style={{ fontSize: 13, color: 'var(--accent)', fontWeight: 500 }}>FedEx International Priority</span>
-          </div>
-
-          <h1 style={{
-            fontSize: 'clamp(40px, 7vw, 76px)', fontFamily: 'Space Grotesk',
-            fontWeight: 700, lineHeight: 1.05, letterSpacing: '-0.04em',
-            color: 'var(--text)', marginBottom: 24
-          }}>
-            Ship anywhere.<br />
-            <span style={{ color: 'var(--accent)' }}>Pay almost nothing.</span>
-          </h1>
-
-          <p style={{ fontSize: 18, color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: 40, maxWidth: 520, margin: '0 auto 40px' }}>
-            Genuine FedEx International Priority labels from <strong style={{ color: 'var(--text)' }}>$2.40</strong>.
-            One-time purchase, no subscription. Label delivered in minutes.
-          </p>
-
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button onClick={handleOrderClick} style={{
-              padding: '14px 32px', background: 'var(--accent)', border: 'none',
-              borderRadius: 10, color: '#fff', fontSize: 16, fontWeight: 600,
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
-              boxShadow: '0 8px 32px rgba(255,107,0,0.35)', transition: 'all 0.2s',
-            }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 12px 40px rgba(255,107,0,0.45)' }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 8px 32px rgba(255,107,0,0.35)' }}>
-              Buy a label <ArrowRight size={16} />
-            </button>
-            <button onClick={() => { if (user) setBulkOpen(true); else setAuthOpen(true) }} style={{
-              padding: '14px 32px', background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)',
-              borderRadius: 10, color: '#fff', fontSize: 16, fontWeight: 600,
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.2s'
-            }}
-              onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--text-dim)')}
-              onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border-bright)')}>
-              📦 Bulk order
-            </button>
-            <a href="#pricing" style={{
-              padding: '14px 32px', background: 'transparent', border: '1px solid var(--border-bright)',
-              borderRadius: 10, color: 'var(--text)', fontSize: 16, fontWeight: 500,
-              textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, transition: 'border-color 0.2s'
-            }}
-              onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--text-dim)')}
-              onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border-bright)')}>
-              See pricing
-            </a>
-          </div>
-
-          <div style={{ display: 'flex', gap: 24, justifyContent: 'center', marginTop: 48, flexWrap: 'wrap' }}>
-            {[
-              { icon: <Shield size={14} />, text: 'Secure payment via Stripe' },
-              { icon: <Zap size={14} />, text: 'Label ready in minutes' },
-              { icon: <Clock size={14} />, text: 'No subscription needed' },
-            ].map((item, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 13 }}>
-                <span style={{ color: 'var(--accent)' }}>{item.icon}</span>
-                {item.text}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32, flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <Link href="/" style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: 13, display: 'flex', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+              <ArrowLeft size={13} /> Home
+            </Link>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 36, height: 36, background: '#8B5CF6', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Package size={18} color="#fff" />
               </div>
-            ))}
+              <div>
+                <h1 style={{ fontSize: 22, fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)' }}>Reseller Panel</h1>
+                <p style={{ fontSize: 12, color: 'var(--text-dim)' }}>Your assigned orders</p>
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={fetchOrders} style={{ padding: '8px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <RefreshCw size={13} /> Refresh
+            </button>
+            <button onClick={async () => { await supabase.auth.signOut(); router.push('/') }} style={{ padding: '8px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <LogOut size={13} /> Sign out
+            </button>
           </div>
         </div>
 
-        <a href="#pricing" style={{ position: 'absolute', bottom: 32, left: '50%', transform: 'translateX(-50%)', color: 'var(--text-dim)', animation: 'bounce 2s infinite' }}>
-          <ChevronDown size={22} />
-        </a>
-      </section>
-
-      {/* ─── PRICING ─── */}
-      <section id="pricing" style={{ padding: '100px 24px', position: 'relative' }}>
-        <div style={{ maxWidth: 1000, margin: '0 auto' }}>
-          <div style={{ textAlign: 'center', marginBottom: 60 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.12em', color: 'var(--accent)', textTransform: 'uppercase', marginBottom: 12 }}>
-              Simple pricing
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 28 }}>
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '18px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 38, height: 38, background: 'rgba(59,130,246,0.1)', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Clock size={16} color="#3B82F6" />
             </div>
-            <h2 style={{ fontSize: 'clamp(28px, 4vw, 42px)', fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)', marginBottom: 16 }}>
-              One price per weight tier
-            </h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: 16, maxWidth: 420, margin: '0 auto' }}>
-              No hidden fees. No minimum order. You pay only for what you ship.
-            </p>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3 }}>Awaiting label</div>
+              <div style={{ fontSize: 26, fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)' }}>{pending.length}</div>
+            </div>
           </div>
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '18px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 38, height: 38, background: 'rgba(0,212,170,0.1)', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <CheckCircle size={16} color="#00D4AA" />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3 }}>Labels delivered</div>
+              <div style={{ fontSize: 26, fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)' }}>{done.length}</div>
+            </div>
+          </div>
+        </div>
 
+        <h2 style={{ fontSize: 16, fontFamily: 'Space Grotesk', fontWeight: 600, color: 'var(--text)', marginBottom: 14 }}>
+          Awaiting label upload
+        </h2>
+
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Loading...</div>
+        ) : pending.length === 0 ? (
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '40px 24px', textAlign: 'center', marginBottom: 28 }}>
+            <CheckCircle size={32} color="var(--success)" style={{ margin: '0 auto 12px' }} />
+            <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>All caught up! No pending orders.</p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 32 }}>
+            {pending.map(order => (
+              <div key={order.id} style={{
+                background: 'var(--bg-surface)', border: `1px solid ${order.is_bulk ? 'rgba(139,92,246,0.3)' : 'rgba(59,130,246,0.25)'}`,
+                borderRadius: 12, padding: '20px 22px',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>#{order.id.slice(0, 8).toUpperCase()}</div>
+                      {order.is_bulk && (
+                        <div style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(139,92,246,0.15)', color: '#8B5CF6', fontSize: 11, fontWeight: 600 }}>
+                          BULK — {order.bulk_recipients?.length || 0} labels
+                        </div>
+                      )}
+                    </div>
+                    {order.is_bulk ? (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                        {order.bulk_recipients?.length} recipients · ${order.price_usd.toFixed(2)} total
+                      </div>
+                    ) : (
+                      <>
+                        <InfoRow label="Nom" value={order.recipient_name} />
+                        <InfoRow label="Adresse" value={order.recipient_address} />
+                        <InfoRow label="Ville" value={order.recipient_city} />
+                        <InfoRow label="Code postal" value={order.recipient_zip} />
+                        <InfoRow label="Pays" value={order.recipient_country} />
+                        <InfoRow label="Poids" value={order.weight_kg < 1 ? `${(order.weight_kg * 1000).toFixed(0)} g` : `${order.weight_kg} kg`} />
+                        <InfoRow label="Prix" value={`$${order.price_usd.toFixed(2)}`} />
+                      </>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+                    {order.is_bulk && (
+                      <button onClick={() => downloadExcel(order)} style={{
+                        padding: '9px 16px', background: 'rgba(0,212,170,0.1)', border: '1px solid rgba(0,212,170,0.2)',
+                        borderRadius: 8, color: '#00D4AA', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                        display: 'flex', alignItems: 'center', gap: 6
+                      }}>
+                        <Download size={14} /> Download Excel
+                      </button>
+                    )}
+                    <button onClick={() => { setUploadModal(order); setPdfFile(null); setUploadError('') }} style={{
+                      padding: '9px 16px', background: '#8B5CF6', border: 'none',
+                      borderRadius: 8, color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                      display: 'flex', alignItems: 'center', gap: 6
+                    }}>
+                      <Upload size={14} /> Upload label
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {done.length > 0 && (
+          <>
+            <h2 style={{ fontSize: 16, fontFamily: 'Space Grotesk', fontWeight: 600, color: 'var(--text)', marginBottom: 14 }}>Completed</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {done.map(order => (
+                <div key={order.id} style={{
+                  background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                  borderRadius: 12, padding: '14px 20px', display: 'flex',
+                  justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10
+                }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>
+                        {order.is_bulk ? `Bulk — ${order.bulk_recipients?.length} labels` : `${order.recipient_name} — ${order.recipient_city}`}
+                      </div>
+                      {order.is_bulk && (
+                        <div style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(139,92,246,0.15)', color: '#8B5CF6', fontSize: 11, fontWeight: 600 }}>BULK</div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>#{order.id.slice(0, 8).toUpperCase()} · ${order.price_usd.toFixed(2)}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {order.is_bulk && (
+                      <button onClick={() => downloadExcel(order)} style={{
+                        padding: '6px 12px', background: 'rgba(0,212,170,0.1)', border: '1px solid rgba(0,212,170,0.2)',
+                        borderRadius: 7, color: '#00D4AA', cursor: 'pointer', fontSize: 12, fontWeight: 500,
+                        display: 'flex', alignItems: 'center', gap: 5
+                      }}>
+                        <Download size={12} /> Excel
+                      </button>
+                    )}
+                    <div style={{ padding: '4px 10px', borderRadius: 6, background: 'rgba(0,212,170,0.1)', color: '#00D4AA', fontSize: 12, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <CheckCircle size={12} /> Label delivered
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {uploadModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 1000
+        }} onClick={e => e.target === e.currentTarget && setUploadModal(null)}>
           <div style={{
             background: 'var(--bg-surface)', border: '1px solid var(--border-bright)',
-            borderRadius: 20, padding: '36px 40px', marginBottom: 40,
-            boxShadow: '0 0 0 1px rgba(255,107,0,0.05), 0 24px 48px rgba(0,0,0,0.3)'
+            borderRadius: 16, padding: 32, width: '100%', maxWidth: 440,
+            boxShadow: '0 24px 64px rgba(0,0,0,0.5)'
           }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40, alignItems: 'center' }} className="pricing-grid">
-              <div>
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 16 }}>Move the slider to see your price</p>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 20 }}>
-                  <span style={{ fontSize: 56, fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>
-                    ${previewPrice.toFixed(2)}
-                  </span>
-                  <span style={{ fontSize: 14, color: 'var(--text-dim)' }}>/ label</span>
-                </div>
-                <input type="range" min="0.05" max="30" step="0.05"
-                  value={previewWeight}
-                  onChange={e => setPreviewWeight(parseFloat(e.target.value))}
-                  style={{ width: '100%', accentColor: 'var(--accent)', marginBottom: 8 }}
-                />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-dim)' }}>
-                  <span>50g</span>
-                  <span style={{ fontWeight: 600, color: 'var(--text-muted)' }}>
-                    {previewWeight < 1 ? `${(previewWeight * 1000).toFixed(0)} g` : `${previewWeight.toFixed(2)} kg`}
-                  </span>
-                  <span>30 kg</span>
-                </div>
-                <button onClick={handleOrderClick} style={{
-                  marginTop: 24, width: '100%', padding: '12px',
-                  background: 'var(--accent)', border: 'none', borderRadius: 8,
-                  color: '#fff', fontSize: 15, fontWeight: 600, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
-                }}>
-                  Order this label <ArrowRight size={15} />
-                </button>
-              </div>
-              <div>
-                <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                  <div style={{ padding: '10px 16px', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)', display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
-                    <span style={{ fontSize: 12, color: 'var(--text-dim)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Weight range</span>
-                    <span style={{ fontSize: 12, color: 'var(--text-dim)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Price</span>
-                  </div>
-                  {PRICING_TIERS.map((tier, i) => {
-                    const active = previewWeight <= tier.maxKg && (i === 0 || previewWeight > PRICING_TIERS[i - 1].maxKg)
-                    return (
-                      <div key={i} style={{
-                        display: 'grid', gridTemplateColumns: '1fr auto',
-                        gap: 8, padding: '12px 16px',
-                        background: active ? 'var(--accent-dim)' : 'transparent',
-                        borderLeft: `3px solid ${active ? 'var(--accent)' : 'transparent'}`,
-                        transition: 'all 0.25s ease'
-                      }}>
-                        <span style={{ fontSize: 14, color: active ? 'var(--text)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                          {active && <CheckCircle size={13} color="var(--accent)" />}
-                          {tier.label}
-                        </span>
-                        <span style={{ fontSize: 15, fontWeight: active ? 700 : 500, color: active ? 'var(--accent)' : 'var(--text-muted)', fontFamily: 'Space Grotesk' }}>
-                          ${tier.price.toFixed(2)}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h3 style={{ fontSize: 18, fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)' }}>Upload label PDF</h3>
+              <button onClick={() => setUploadModal(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
             </div>
-          </div>
-        </div>
-        <style>{`
-          @media (max-width: 640px) {
-            .pricing-grid { grid-template-columns: 1fr !important; }
-          }
-        `}</style>
-      </section>
 
-      {/* ─── HOW IT WORKS ─── */}
-      <section id="how-it-works" style={{ padding: '80px 24px 100px', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ maxWidth: 900, margin: '0 auto' }}>
-          <div style={{ textAlign: 'center', marginBottom: 60 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.12em', color: 'var(--accent)', textTransform: 'uppercase', marginBottom: 12 }}>
-              How it works
-            </div>
-            <h2 style={{ fontSize: 'clamp(28px, 4vw, 42px)', fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)' }}>
-              From order to shipment in 3 steps
-            </h2>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }} className="steps-grid">
-            {[
-              { step: '01', icon: <Package size={22} color="var(--accent)" />, title: 'Select your weight', desc: 'Enter your package weight and destination. Our system instantly shows your price — no surprises.' },
-              { step: '02', icon: <Shield size={22} color="var(--accent)" />, title: 'Pay securely', desc: 'Complete checkout via Stripe with any major card. Your payment is encrypted and processed instantly.' },
-              { step: '03', icon: <Zap size={22} color="var(--accent)" />, title: 'Get your label', desc: 'We generate your FedEx label and send it directly to your dashboard. Print and ship — it\'s that simple.' },
-            ].map((item) => (
-              <div key={item.step} style={{
-                background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-                borderRadius: 14, padding: 28, position: 'relative', overflow: 'hidden'
-              }}>
-                <div style={{
-                  position: 'absolute', top: 16, right: 16,
-                  fontSize: 48, fontFamily: 'Space Grotesk', fontWeight: 800,
-                  color: 'var(--border-bright)', lineHeight: 1, userSelect: 'none'
-                }}>
-                  {item.step}
+            <div style={{ background: 'var(--bg-elevated)', borderRadius: 10, padding: 16, marginBottom: 20 }}>
+              {uploadModal.is_bulk ? (
+                <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>
+                  Bulk order — <strong style={{ color: 'var(--text)' }}>{uploadModal.bulk_recipients?.length} labels</strong> · ${uploadModal.price_usd.toFixed(2)}
                 </div>
-                <div style={{ marginBottom: 16 }}>{item.icon}</div>
-                <h3 style={{ fontSize: 17, fontWeight: 600, color: 'var(--text)', marginBottom: 10 }}>{item.title}</h3>
-                <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.65 }}>{item.desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-        <style>{`
-          @media (max-width: 640px) {
-            .steps-grid { grid-template-columns: 1fr !important; }
-          }
-        `}</style>
-      </section>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  <InfoRow label="Nom" value={uploadModal.recipient_name} />
+                  <InfoRow label="Adresse" value={uploadModal.recipient_address} />
+                  <InfoRow label="Ville" value={uploadModal.recipient_city} />
+                  <InfoRow label="Code postal" value={uploadModal.recipient_zip} />
+                  <InfoRow label="Pays" value={uploadModal.recipient_country} />
+                  <InfoRow label="Poids" value={uploadModal.weight_kg < 1 ? `${(uploadModal.weight_kg * 1000).toFixed(0)} g` : `${uploadModal.weight_kg} kg`} />
+                </div>
+              )}
+            </div>
 
-      {/* ─── CTA ─── */}
-      <section style={{ padding: '100px 24px', textAlign: 'center' }}>
-        <div style={{ maxWidth: 560, margin: '0 auto' }}>
-          <h2 style={{ fontSize: 'clamp(28px, 4vw, 42px)', fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)', marginBottom: 16 }}>
-            Ready to ship smarter?
-          </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: 16, marginBottom: 36 }}>
-            Join customers saving on every international shipment. Get your first label now.
-          </p>
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button onClick={handleOrderClick} style={{
-              padding: '16px 40px', background: 'var(--accent)', border: 'none',
-              borderRadius: 10, color: '#fff', fontSize: 16, fontWeight: 600,
-              cursor: 'pointer', boxShadow: '0 8px 32px rgba(255,107,0,0.35)',
-              display: 'inline-flex', alignItems: 'center', gap: 8, transition: 'all 0.2s'
-            }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 12px 40px rgba(255,107,0,0.45)' }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 8px 32px rgba(255,107,0,0.35)' }}>
-              Buy a label — from $2.40 <ArrowRight size={16} />
-            </button>
-            <button onClick={() => { if (user) setBulkOpen(true); else setAuthOpen(true) }} style={{
-              padding: '16px 40px', background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)',
-              borderRadius: 10, color: '#fff', fontSize: 16, fontWeight: 600,
-              cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8
+            <label style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: 10, padding: '24px', borderRadius: 10, cursor: 'pointer', marginBottom: 16,
+              border: `2px dashed ${pdfFile ? '#8B5CF6' : 'var(--border-bright)'}`,
+              background: pdfFile ? 'rgba(139,92,246,0.08)' : 'var(--bg-elevated)',
+              transition: 'all 0.2s'
             }}>
-              📦 Bulk order
+              <Upload size={24} color={pdfFile ? '#8B5CF6' : 'var(--text-dim)'} />
+              {pdfFile ? (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: '#8B5CF6' }}>{pdfFile.name}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>{(pdfFile.size / 1024).toFixed(0)} KB</div>
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 14, color: 'var(--text-muted)', fontWeight: 500 }}>Click to select PDF</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>FedEx label PDF only</div>
+                </div>
+              )}
+              <input type="file" accept=".pdf" onChange={e => setPdfFile(e.target.files?.[0] || null)} style={{ display: 'none' }} />
+            </label>
+
+            {uploadError && (
+              <div style={{ background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: 8, padding: '10px 14px', color: '#ff6b6b', fontSize: 13, marginBottom: 14 }}>
+                {uploadError}
+              </div>
+            )}
+
+            <button onClick={handleUpload} disabled={uploading || !pdfFile} style={{
+              width: '100%', padding: '12px', background: '#8B5CF6', border: 'none',
+              borderRadius: 8, color: '#fff', fontSize: 15, fontWeight: 600,
+              cursor: uploading || !pdfFile ? 'not-allowed' : 'pointer',
+              opacity: !pdfFile ? 0.5 : 1,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+            }}>
+              {uploading && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />}
+              {uploading ? 'Uploading...' : 'Confirm & deliver to customer'}
             </button>
           </div>
         </div>
-      </section>
-
-      {/* ─── FOOTER ─── */}
-      <footer style={{ borderTop: '1px solid var(--border)', padding: '32px 24px' }}>
-        <div style={{ maxWidth: 1000, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 26, height: 26, background: 'var(--accent)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Package size={13} color="#fff" />
-            </div>
-            <span style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>
-              Ship<span style={{ color: 'var(--accent)' }}>Deal</span>
-            </span>
-          </div>
-          <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>
-            © 2025 ShipDeal. FedEx is a registered trademark of FedEx Corporation.
-          </p>
-          <div style={{ display: 'flex', gap: 20 }}>
-            <Link href="/dashboard" style={{ fontSize: 13, color: 'var(--text-dim)', textDecoration: 'none' }}>Dashboard</Link>
-          </div>
-        </div>
-      </footer>
-
-      <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSuccess={() => { setAuthOpen(false); setOrderOpen(true) }} />
-      {user && <OrderModal isOpen={orderOpen} onClose={() => setOrderOpen(false)} userId={user.id} />}
-      {user && <BulkOrderModal isOpen={bulkOpen} onClose={() => setBulkOpen(false)} userId={user.id} />}
-
-      <style>{`
-        @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
-        @keyframes bounce { 0%,100% { transform:translateX(-50%) translateY(0) } 50% { transform:translateX(-50%) translateY(6px) } }
-      `}</style>
+      )}
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }
