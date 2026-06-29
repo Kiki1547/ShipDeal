@@ -18,26 +18,38 @@ export async function POST(req: NextRequest) {
   const supabase = await createSupabaseServiceClient()
 
   if (event.type === 'checkout.session.completed') {
-    const session = event.data.object as { metadata?: { orderId?: string }; payment_status?: string }
-    const orderId = session.metadata?.orderId
+    const session = event.data.object as {
+      metadata?: { orderId?: string; orderIds?: string; bulk?: string }
+      payment_status?: string
+    }
 
-    if (orderId && session.payment_status === 'paid') {
-      await supabase
-        .from('orders')
-        .update({ status: 'paid' })
-        .eq('id', orderId)
-      console.log(`✅ Order ${orderId} paid — ready for label generation`)
+    if (session.payment_status === 'paid') {
+      const isBulk = session.metadata?.bulk === 'true'
+
+      if (isBulk && session.metadata?.orderIds) {
+        // Bulk order — update all orders
+        const ids = session.metadata.orderIds.split(',')
+        await supabase.from('orders').update({ status: 'paid' }).in('id', ids)
+        console.log(`✅ Bulk order paid — ${ids.length} orders updated`)
+      } else if (session.metadata?.orderId) {
+        // Single order
+        await supabase.from('orders').update({ status: 'paid' }).eq('id', session.metadata.orderId)
+        console.log(`✅ Order ${session.metadata.orderId} paid`)
+      }
     }
   }
 
   if (event.type === 'checkout.session.expired') {
-    const session = event.data.object as { metadata?: { orderId?: string } }
-    const orderId = session.metadata?.orderId
-    if (orderId) {
-      await supabase
-        .from('orders')
-        .update({ status: 'cancelled' })
-        .eq('id', orderId)
+    const session = event.data.object as {
+      metadata?: { orderId?: string; orderIds?: string; bulk?: string }
+    }
+
+    const isBulk = session.metadata?.bulk === 'true'
+    if (isBulk && session.metadata?.orderIds) {
+      const ids = session.metadata.orderIds.split(',')
+      await supabase.from('orders').update({ status: 'cancelled' }).in('id', ids)
+    } else if (session.metadata?.orderId) {
+      await supabase.from('orders').update({ status: 'cancelled' }).eq('id', session.metadata.orderId)
     }
   }
 

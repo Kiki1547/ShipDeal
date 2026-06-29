@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Package, Download, Clock, CheckCircle, XCircle, Plus, ArrowLeft, LogOut, RefreshCw } from 'lucide-react'
 import OrderModal from '@/components/OrderModal'
+import BulkOrderModal from '@/components/BulkOrderModal'
 
 interface Order {
   id: string
@@ -31,6 +32,7 @@ export default function DashboardPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [orderOpen, setOrderOpen] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
   const router = useRouter()
 
   const fetchOrders = useCallback(async (userId: string) => {
@@ -99,9 +101,9 @@ export default function DashboardPage() {
         {/* Stats */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 32 }} className="stats-grid">
           {[
-            { label: 'Total orders', value: stats.total, unit: '' },
-            { label: 'Labels ready', value: stats.ready, unit: '' },
-            { label: 'Total spent', value: `$${stats.spent.toFixed(2)}`, unit: '' },
+            { label: 'Total orders', value: stats.total },
+            { label: 'Labels ready', value: stats.ready },
+            { label: 'Total spent', value: `$${stats.spent.toFixed(2)}` },
           ].map((s, i) => (
             <div key={i} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '20px 24px' }}>
               <div style={{ fontSize: 12, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500, marginBottom: 8 }}>{s.label}</div>
@@ -120,6 +122,13 @@ export default function DashboardPage() {
               display: 'flex', alignItems: 'center', gap: 6
             }}>
               <RefreshCw size={13} /> Refresh
+            </button>
+            <button onClick={() => setBulkOpen(true)} style={{
+              padding: '9px 18px', background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)',
+              borderRadius: 8, color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 600,
+              display: 'flex', alignItems: 'center', gap: 7
+            }}>
+              📦 Bulk order
             </button>
             <button onClick={() => setOrderOpen(true)} style={{
               padding: '9px 18px', background: 'var(--accent)', border: 'none',
@@ -147,12 +156,20 @@ export default function DashboardPage() {
             </div>
             <h3 style={{ fontSize: 17, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>No orders yet</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 24 }}>Your first label is one click away.</p>
-            <button onClick={() => setOrderOpen(true)} style={{
-              padding: '11px 24px', background: 'var(--accent)', border: 'none',
-              borderRadius: 8, color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 600
-            }}>
-              Buy your first label
-            </button>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button onClick={() => setOrderOpen(true)} style={{
+                padding: '11px 24px', background: 'var(--accent)', border: 'none',
+                borderRadius: 8, color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 600
+              }}>
+                Buy your first label
+              </button>
+              <button onClick={() => setBulkOpen(true)} style={{
+                padding: '11px 24px', background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)',
+                borderRadius: 8, color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 600
+              }}>
+                📦 Bulk order
+              </button>
+            </div>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -211,6 +228,7 @@ export default function DashboardPage() {
       </div>
 
       <OrderModal isOpen={orderOpen} onClose={() => setOrderOpen(false)} userId={user.id} />
+      <BulkOrderModal isOpen={bulkOpen} onClose={() => setBulkOpen(false)} userId={user.id} />
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

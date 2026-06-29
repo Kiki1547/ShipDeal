@@ -5,6 +5,7 @@ import type { User } from '@supabase/supabase-js'
 import Navbar from '@/components/Navbar'
 import AuthModal from '@/components/AuthModal'
 import OrderModal from '@/components/OrderModal'
+import BulkOrderModal from '@/components/BulkOrderModal'
 import { PRICING_TIERS, getPriceForWeight } from '@/lib/pricing'
 import { Package, Zap, Shield, Clock, ChevronDown, ArrowRight, CheckCircle } from 'lucide-react'
 import Link from 'next/link'
@@ -13,6 +14,7 @@ export default function HomePage() {
   const [user, setUser] = useState<User | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const [orderOpen, setOrderOpen] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
   const [previewWeight, setPreviewWeight] = useState(1.0)
   const heroRef = useRef<HTMLDivElement>(null)
 
@@ -46,7 +48,6 @@ export default function HomePage() {
         alignItems: 'center', justifyContent: 'center',
         padding: '120px 24px 80px', position: 'relative', overflow: 'hidden'
       }}>
-        {/* Background grid */}
         <div style={{
           position: 'absolute', inset: 0,
           backgroundImage: `linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px)`,
@@ -54,7 +55,6 @@ export default function HomePage() {
           maskImage: 'radial-gradient(ellipse 80% 60% at 50% 40%, black 30%, transparent 100%)',
           opacity: 0.4
         }} />
-        {/* Orange glow */}
         <div style={{
           position: 'absolute', top: '30%', left: '50%', transform: 'translate(-50%,-50%)',
           width: 600, height: 400, borderRadius: '50%',
@@ -63,7 +63,6 @@ export default function HomePage() {
         }} />
 
         <div style={{ position: 'relative', maxWidth: 720, textAlign: 'center' }}>
-          {/* Badge */}
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
             background: 'var(--accent-dim)', border: '1px solid var(--accent-glow)',
@@ -83,7 +82,7 @@ export default function HomePage() {
           </h1>
 
           <p style={{ fontSize: 18, color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: 40, maxWidth: 520, margin: '0 auto 40px' }}>
-            Genuine FedEx International Priority labels from <strong style={{ color: 'var(--text)' }}>$2.40</strong>. 
+            Genuine FedEx International Priority labels from <strong style={{ color: 'var(--text)' }}>$2.40</strong>.
             One-time purchase, no subscription. Label delivered in minutes.
           </p>
 
@@ -98,8 +97,17 @@ export default function HomePage() {
               onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 8px 32px rgba(255,107,0,0.35)' }}>
               Buy a label <ArrowRight size={16} />
             </button>
-            <a href="#pricing" style={{
+            <button onClick={() => { if (user) setBulkOpen(true); else setAuthOpen(true) }} style={{
               padding: '14px 32px', background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)',
+              borderRadius: 10, color: '#fff', fontSize: 16, fontWeight: 600,
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.2s'
+            }}
+              onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--text-dim)')}
+              onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border-bright)')}>
+              📦 Bulk order
+            </button>
+            <a href="#pricing" style={{
+              padding: '14px 32px', background: 'transparent', border: '1px solid var(--border-bright)',
               borderRadius: 10, color: 'var(--text)', fontSize: 16, fontWeight: 500,
               textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, transition: 'border-color 0.2s'
             }}
@@ -109,7 +117,6 @@ export default function HomePage() {
             </a>
           </div>
 
-          {/* Trust badges */}
           <div style={{ display: 'flex', gap: 24, justifyContent: 'center', marginTop: 48, flexWrap: 'wrap' }}>
             {[
               { icon: <Shield size={14} />, text: 'Secure payment via Stripe' },
@@ -144,7 +151,6 @@ export default function HomePage() {
             </p>
           </div>
 
-          {/* Interactive pricer */}
           <div style={{
             background: 'var(--bg-surface)', border: '1px solid var(--border-bright)',
             borderRadius: 20, padding: '36px 40px', marginBottom: 40,
@@ -234,7 +240,7 @@ export default function HomePage() {
             {[
               { step: '01', icon: <Package size={22} color="var(--accent)" />, title: 'Select your weight', desc: 'Enter your package weight and destination. Our system instantly shows your price — no surprises.' },
               { step: '02', icon: <Shield size={22} color="var(--accent)" />, title: 'Pay securely', desc: 'Complete checkout via Stripe with any major card. Your payment is encrypted and processed instantly.' },
-              { step: '03', icon: <Zap size={22} color="var(--accent)" />, title: 'Get your label', desc: 'We generate your FedEx label and send it directly to your email. Print and ship — it\'s that simple.' },
+              { step: '03', icon: <Zap size={22} color="var(--accent)" />, title: 'Get your label', desc: 'We generate your FedEx label and send it directly to your dashboard. Print and ship — it\'s that simple.' },
             ].map((item) => (
               <div key={item.step} style={{
                 background: 'var(--bg-elevated)', border: '1px solid var(--border)',
@@ -270,16 +276,25 @@ export default function HomePage() {
           <p style={{ color: 'var(--text-muted)', fontSize: 16, marginBottom: 36 }}>
             Join customers saving on every international shipment. Get your first label now.
           </p>
-          <button onClick={handleOrderClick} style={{
-            padding: '16px 40px', background: 'var(--accent)', border: 'none',
-            borderRadius: 10, color: '#fff', fontSize: 16, fontWeight: 600,
-            cursor: 'pointer', boxShadow: '0 8px 32px rgba(255,107,0,0.35)',
-            display: 'inline-flex', alignItems: 'center', gap: 8, transition: 'all 0.2s'
-          }}
-            onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 12px 40px rgba(255,107,0,0.45)' }}
-            onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 8px 32px rgba(255,107,0,0.35)' }}>
-            Buy a label — from $2.40 <ArrowRight size={16} />
-          </button>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button onClick={handleOrderClick} style={{
+              padding: '16px 40px', background: 'var(--accent)', border: 'none',
+              borderRadius: 10, color: '#fff', fontSize: 16, fontWeight: 600,
+              cursor: 'pointer', boxShadow: '0 8px 32px rgba(255,107,0,0.35)',
+              display: 'inline-flex', alignItems: 'center', gap: 8, transition: 'all 0.2s'
+            }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 12px 40px rgba(255,107,0,0.45)' }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 8px 32px rgba(255,107,0,0.35)' }}>
+              Buy a label — from $2.40 <ArrowRight size={16} />
+            </button>
+            <button onClick={() => { if (user) setBulkOpen(true); else setAuthOpen(true) }} style={{
+              padding: '16px 40px', background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)',
+              borderRadius: 10, color: '#fff', fontSize: 16, fontWeight: 600,
+              cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8
+            }}>
+              📦 Bulk order
+            </button>
+          </div>
         </div>
       </section>
 
@@ -303,9 +318,9 @@ export default function HomePage() {
         </div>
       </footer>
 
-      {/* Modals */}
       <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSuccess={() => { setAuthOpen(false); setOrderOpen(true) }} />
       {user && <OrderModal isOpen={orderOpen} onClose={() => setOrderOpen(false)} userId={user.id} />}
+      {user && <BulkOrderModal isOpen={bulkOpen} onClose={() => setBulkOpen(false)} userId={user.id} />}
 
       <style>{`
         @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
