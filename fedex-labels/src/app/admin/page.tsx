@@ -46,6 +46,8 @@ const ROLE_CONFIG = {
 type Tab = 'orders' | 'users'
 
 export default function AdminPage() {
+  const [mounted, setMounted] = useState(false)
+  const [authorized, setAuthorized] = useState(false)
   const [tab, setTab] = useState<Tab>('orders')
   const [orders, setOrders] = useState<Order[]>([])
   const [users, setUsers] = useState<Profile[]>([])
@@ -74,11 +76,25 @@ export default function AdminPage() {
   }, [])
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (!mounted) return
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
       if (!session) { router.push('/'); return }
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single()
+      if (profile?.role !== 'admin') { router.push('/'); return }
+      setAuthorized(true)
       fetchData()
-    })
-  }, [router, fetchData])
+    }
+    checkAuth()
+  }, [mounted, router, fetchData])
 
   const updateRole = async (userId: string, newRole: string) => {
     setActionLoading(userId)
@@ -114,6 +130,15 @@ export default function AdminPage() {
     })
     await fetchData()
     setActionLoading(null)
+  }
+
+  // Show nothing until mounted and auth checked
+  if (!mounted || !authorized) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading...</div>
+      </div>
+    )
   }
 
   const filteredOrders = statusFilter === 'all' ? orders : orders.filter(o => o.status === statusFilter)
@@ -218,7 +243,6 @@ export default function AdminPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {filteredOrders.map(order => {
                   const cfg = STATUS_CONFIG[order.status]
-                  const assignedReseller = resellers.find(r => r.id === order.assigned_to)
                   return (
                     <div key={order.id} style={{
                       background: 'var(--bg-surface)', border: '1px solid var(--border)',
@@ -250,7 +274,7 @@ export default function AdminPage() {
                           style={{
                             padding: '6px 28px 6px 10px', borderRadius: 7,
                             background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)',
-                            color: assignedReseller ? '#8B5CF6' : 'var(--text-muted)',
+                            color: order.assigned_to ? '#8B5CF6' : 'var(--text-muted)',
                             fontSize: 12, cursor: 'pointer', appearance: 'none', minWidth: 130
                           }}>
                           <option value="">Unassigned</option>
