@@ -46,7 +46,6 @@ const ROLE_CONFIG = {
 type Tab = 'orders' | 'users'
 
 export default function AdminPage() {
-  const [status, setStatus] = useState<'loading' | 'authorized' | 'unauthorized'>('loading')
   const [tab, setTab] = useState<Tab>('orders')
   const [orders, setOrders] = useState<Order[]>([])
   const [users, setUsers] = useState<Profile[]>([])
@@ -72,19 +71,13 @@ export default function AdminPage() {
   }, [])
 
   useEffect(() => {
-  setStatus('authorized')
-  const run = async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session) fetchData(session.access_token)
-  }
-  run()
-}, [fetchData])
-
-  useEffect(() => {
-    if (status === 'unauthorized') {
-      router.push('/')
+    const run = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { router.push('/'); return }
+      fetchData(session.access_token)
     }
-  }, [status, router])
+    run()
+  }, [fetchData, router])
 
   const getToken = async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -125,22 +118,6 @@ export default function AdminPage() {
     })
     fetchData(token)
     setActionLoading(null)
-  }
-
-  if (status === 'loading') {
-    return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Checking permissions...</div>
-      </div>
-    )
-  }
-
-  if (status === 'unauthorized') {
-    return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Redirecting...</div>
-      </div>
-    )
   }
 
   const filteredOrders = statusFilter === 'all' ? orders : orders.filter(o => o.status === statusFilter)
