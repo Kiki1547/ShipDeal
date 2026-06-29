@@ -19,11 +19,18 @@ interface Order {
   created_at: string
 }
 
+const InfoRow = ({ label, value }: { label: string, value: string }) => (
+  <div style={{ display: 'flex', gap: 8 }}>
+    <span style={{ fontSize: 13, color: 'var(--text-dim)', minWidth: 90 }}>{label} :</span>
+    <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>{value}</span>
+  </div>
+)
+
 export default function ResellerPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [uploadModal, setUploadModal] = useState<Order | null>(null)
-  const [labelUrl, setLabelUrl] = useState('')
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const router = useRouter()
@@ -47,11 +54,21 @@ export default function ResellerPage() {
   }, [router, fetchOrders])
 
   const handleUpload = async () => {
-    if (!uploadModal || !labelUrl) return
+    if (!uploadModal || !pdfFile) return
     setUploading(true)
     setUploadError('')
     try {
       const { data: { session } } = await supabase.auth.getSession()
+
+      const fileName = `${uploadModal.id}-${Date.now()}.pdf`
+      const { error: uploadErr } = await supabase.storage
+        .from('labels')
+        .upload(fileName, pdfFile, { contentType: 'application/pdf', upsert: true })
+      if (uploadErr) throw new Error(uploadErr.message)
+
+      const { data: urlData } = supabase.storage.from('labels').getPublicUrl(fileName)
+      const labelUrl = urlData.publicUrl
+
       const res = await fetch('/api/reseller/upload-label', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
@@ -60,7 +77,7 @@ export default function ResellerPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setUploadModal(null)
-      setLabelUrl('')
+      setPdfFile(null)
       fetchOrders()
     } catch (err: unknown) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed')
@@ -76,7 +93,6 @@ export default function ResellerPage() {
     <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: 24 }}>
       <div style={{ maxWidth: 900, margin: '0 auto' }}>
 
-        {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <Link href="/" style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: 13, display: 'flex', alignItems: 'center', gap: 4, marginBottom: 8 }}>
@@ -102,7 +118,6 @@ export default function ResellerPage() {
           </div>
         </div>
 
-        {/* Stats */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 28 }}>
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '18px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ width: 38, height: 38, background: 'rgba(59,130,246,0.1)', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -124,7 +139,6 @@ export default function ResellerPage() {
           </div>
         </div>
 
-        {/* Pending orders */}
         <h2 style={{ fontSize: 16, fontFamily: 'Space Grotesk', fontWeight: 600, color: 'var(--text)', marginBottom: 14 }}>
           Awaiting label upload
         </h2>
@@ -137,29 +151,27 @@ export default function ResellerPage() {
             <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>All caught up! No pending orders.</p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 28 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 32 }}>
             {pending.map(order => (
               <div key={order.id} style={{
                 background: 'var(--bg-surface)', border: '1px solid rgba(59,130,246,0.25)',
-                borderRadius: 12, padding: '18px 20px',
+                borderRadius: 12, padding: '20px 22px',
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>
-                      {order.recipient_name}
-                    </div>
-                    <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.7 }}>
-                      {order.recipient_address}<br />
-                      {order.recipient_zip} {order.recipient_city}, {order.recipient_country}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>
-                      {order.weight_kg < 1 ? `${(order.weight_kg * 1000).toFixed(0)}g` : `${order.weight_kg}kg`} · #{order.id.slice(0, 8).toUpperCase()} · ${order.price_usd.toFixed(2)}
-                    </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 4 }}>#{order.id.slice(0, 8).toUpperCase()}</div>
+                    <InfoRow label="Nom" value={order.recipient_name} />
+                    <InfoRow label="Adresse" value={order.recipient_address} />
+                    <InfoRow label="Ville" value={order.recipient_city} />
+                    <InfoRow label="Code postal" value={order.recipient_zip} />
+                    <InfoRow label="Pays" value={order.recipient_country} />
+                    <InfoRow label="Poids" value={order.weight_kg < 1 ? `${(order.weight_kg * 1000).toFixed(0)} g` : `${order.weight_kg} kg`} />
+                    <InfoRow label="Prix" value={`$${order.price_usd.toFixed(2)}`} />
                   </div>
-                  <button onClick={() => { setUploadModal(order); setLabelUrl(''); setUploadError('') }} style={{
+                  <button onClick={() => { setUploadModal(order); setPdfFile(null); setUploadError('') }} style={{
                     padding: '10px 18px', background: '#8B5CF6', border: 'none',
                     borderRadius: 8, color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 600,
-                    display: 'flex', alignItems: 'center', gap: 7
+                    display: 'flex', alignItems: 'center', gap: 7, alignSelf: 'flex-start'
                   }}>
                     <Upload size={14} /> Upload label
                   </button>
@@ -169,12 +181,9 @@ export default function ResellerPage() {
           </div>
         )}
 
-        {/* Done orders */}
         {done.length > 0 && (
           <>
-            <h2 style={{ fontSize: 16, fontFamily: 'Space Grotesk', fontWeight: 600, color: 'var(--text)', marginBottom: 14 }}>
-              Completed
-            </h2>
+            <h2 style={{ fontSize: 16, fontFamily: 'Space Grotesk', fontWeight: 600, color: 'var(--text)', marginBottom: 14 }}>Completed</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {done.map(order => (
                 <div key={order.id} style={{
@@ -183,13 +192,11 @@ export default function ResellerPage() {
                   justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10
                 }}>
                   <div>
-                    <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{order.recipient_name} — {order.recipient_city}</div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{order.recipient_name} — {order.recipient_city}, {order.recipient_country}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>#{order.id.slice(0, 8).toUpperCase()}</div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ padding: '4px 10px', borderRadius: 6, background: 'rgba(0,212,170,0.1)', color: '#00D4AA', fontSize: 12, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <CheckCircle size={12} /> Label delivered
-                    </div>
+                  <div style={{ padding: '4px 10px', borderRadius: 6, background: 'rgba(0,212,170,0.1)', color: '#00D4AA', fontSize: 12, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <CheckCircle size={12} /> Label delivered
                   </div>
                 </div>
               ))}
@@ -198,7 +205,6 @@ export default function ResellerPage() {
         )}
       </div>
 
-      {/* Upload Modal */}
       {uploadModal && (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)',
@@ -210,37 +216,42 @@ export default function ResellerPage() {
             boxShadow: '0 24px 64px rgba(0,0,0,0.5)'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h3 style={{ fontSize: 18, fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)' }}>Upload label</h3>
+              <h3 style={{ fontSize: 18, fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)' }}>Upload label PDF</h3>
               <button onClick={() => setUploadModal(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
                 <X size={18} />
               </button>
             </div>
 
-            <div style={{ background: 'var(--bg-elevated)', borderRadius: 10, padding: 14, marginBottom: 20 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>{uploadModal.recipient_name}</div>
-              <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                {uploadModal.recipient_address}, {uploadModal.recipient_zip} {uploadModal.recipient_city}, {uploadModal.recipient_country}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>
-                {uploadModal.weight_kg < 1 ? `${(uploadModal.weight_kg * 1000).toFixed(0)}g` : `${uploadModal.weight_kg}kg`} · ${uploadModal.price_usd.toFixed(2)}
-              </div>
+            <div style={{ background: 'var(--bg-elevated)', borderRadius: 10, padding: 16, marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <InfoRow label="Nom" value={uploadModal.recipient_name} />
+              <InfoRow label="Adresse" value={uploadModal.recipient_address} />
+              <InfoRow label="Ville" value={uploadModal.recipient_city} />
+              <InfoRow label="Code postal" value={uploadModal.recipient_zip} />
+              <InfoRow label="Pays" value={uploadModal.recipient_country} />
+              <InfoRow label="Poids" value={uploadModal.weight_kg < 1 ? `${(uploadModal.weight_kg * 1000).toFixed(0)} g` : `${uploadModal.weight_kg} kg`} />
             </div>
 
-            <label style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: 8 }}>
-              PDF label URL (public link)
+            <label style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: 10, padding: '24px', borderRadius: 10, cursor: 'pointer', marginBottom: 16,
+              border: `2px dashed ${pdfFile ? '#8B5CF6' : 'var(--border-bright)'}`,
+              background: pdfFile ? 'rgba(139,92,246,0.08)' : 'var(--bg-elevated)',
+              transition: 'all 0.2s'
+            }}>
+              <Upload size={24} color={pdfFile ? '#8B5CF6' : 'var(--text-dim)'} />
+              {pdfFile ? (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: '#8B5CF6' }}>{pdfFile.name}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>{(pdfFile.size / 1024).toFixed(0)} KB</div>
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 14, color: 'var(--text-muted)', fontWeight: 500 }}>Click to select PDF</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>FedEx label PDF only</div>
+                </div>
+              )}
+              <input type="file" accept=".pdf" onChange={e => setPdfFile(e.target.files?.[0] || null)} style={{ display: 'none' }} />
             </label>
-            <input
-              value={labelUrl}
-              onChange={e => setLabelUrl(e.target.value)}
-              placeholder="https://storage.example.com/label.pdf"
-              style={{
-                width: '100%', padding: '10px 14px', background: 'var(--bg-elevated)',
-                border: '1px solid var(--border-bright)', borderRadius: 8,
-                color: 'var(--text)', fontSize: 14, outline: 'none', marginBottom: 16
-              }}
-              onFocus={e => (e.target.style.borderColor = '#8B5CF6')}
-              onBlur={e => (e.target.style.borderColor = 'var(--border-bright)')}
-            />
 
             {uploadError && (
               <div style={{ background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: 8, padding: '10px 14px', color: '#ff6b6b', fontSize: 13, marginBottom: 14 }}>
@@ -248,20 +259,19 @@ export default function ResellerPage() {
               </div>
             )}
 
-            <button onClick={handleUpload} disabled={uploading || !labelUrl} style={{
+            <button onClick={handleUpload} disabled={uploading || !pdfFile} style={{
               width: '100%', padding: '12px', background: '#8B5CF6', border: 'none',
               borderRadius: 8, color: '#fff', fontSize: 15, fontWeight: 600,
-              cursor: uploading || !labelUrl ? 'not-allowed' : 'pointer',
-              opacity: !labelUrl ? 0.5 : 1,
+              cursor: uploading || !pdfFile ? 'not-allowed' : 'pointer',
+              opacity: !pdfFile ? 0.5 : 1,
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
             }}>
               {uploading && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />}
-              Confirm & deliver to customer
+              {uploading ? 'Uploading...' : 'Confirm & deliver to customer'}
             </button>
           </div>
         </div>
       )}
-
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   )
