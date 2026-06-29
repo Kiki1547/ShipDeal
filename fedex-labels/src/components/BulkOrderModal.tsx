@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { X, Upload, Loader2, FileSpreadsheet, Trash2, ShoppingCart } from 'lucide-react'
+import { X, Loader2, FileSpreadsheet, Trash2, ShoppingCart } from 'lucide-react'
 import { getPriceForWeight } from '@/lib/pricing'
 import { supabase } from '@/lib/supabase'
 
@@ -50,6 +50,13 @@ export default function BulkOrderModal({ isOpen, onClose, userId }: BulkOrderMod
 
   if (!isOpen) return null
 
+  const handleClose = () => {
+    setRows([])
+    setError('')
+    setLoading(false)
+    onClose()
+  }
+
   const handleFile = async (file: File) => {
     setError('')
     try {
@@ -87,7 +94,13 @@ export default function BulkOrderModal({ isOpen, onClose, userId }: BulkOrderMod
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
-      if (data.url) { const url = data.url; setTimeout(() => { window.location.href = url }, 0) }
+      // Reset state before redirect
+      setRows([])
+      setError('')
+      if (data.url) {
+        const url = data.url
+        setTimeout(() => { window.location.href = url }, 0)
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Checkout failed')
       setLoading(false)
@@ -99,7 +112,7 @@ export default function BulkOrderModal({ isOpen, onClose, userId }: BulkOrderMod
       position: 'fixed', inset: 0, zIndex: 1000,
       background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24
-    }} onClick={e => e.target === e.currentTarget && onClose()}>
+    }} onClick={e => e.target === e.currentTarget && handleClose()}>
       <div style={{
         background: 'var(--bg-surface)', border: '1px solid var(--border-bright)',
         borderRadius: 16, padding: 36, width: '100%', maxWidth: 700,
@@ -110,13 +123,13 @@ export default function BulkOrderModal({ isOpen, onClose, userId }: BulkOrderMod
             <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', fontFamily: 'Space Grotesk' }}>Bulk order</h2>
             <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 4 }}>Upload a CSV or Excel file to order multiple labels at once</p>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+          <button onClick={handleClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
             <X size={20} />
           </button>
         </div>
 
-        {/* Template download */}
-        <div style={{ background: 'var(--bg-elevated)', borderRadius: 10, padding: 14, marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        {/* Template */}
+        <div style={{ background: 'var(--bg-elevated)', borderRadius: 10, padding: 14, marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>Required columns</div>
             <div style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'monospace' }}>
@@ -191,7 +204,6 @@ export default function BulkOrderModal({ isOpen, onClose, userId }: BulkOrderMod
                 </tbody>
               </table>
             </div>
-
             {rows.some(r => r.error) && (
               <div style={{ marginTop: 8, fontSize: 12, color: '#F59E0B' }}>
                 ⚠️ {rows.filter(r => r.error).length} row(s) with errors will be skipped
@@ -227,7 +239,7 @@ export default function BulkOrderModal({ isOpen, onClose, userId }: BulkOrderMod
         }}>
           {loading && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />}
           <ShoppingCart size={16} />
-          Pay ${total.toFixed(2)} for {validRows.length} label{validRows.length > 1 ? 's' : ''} →
+          {loading ? 'Redirecting to payment...' : `Pay $${total.toFixed(2)} for ${validRows.length} label${validRows.length > 1 ? 's' : ''} →`}
         </button>
       </div>
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>

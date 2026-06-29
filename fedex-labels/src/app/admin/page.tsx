@@ -57,11 +57,14 @@ export default function AdminPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true)
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return
+    const token = session.access_token
     const [ordersRes, usersRes] = await Promise.all([
-      fetch('/api/admin/orders', { headers: { Authorization: `Bearer ${localStorage.getItem('adminToken') || ''}` } }),
-      fetch('/api/admin/users', { headers: { Authorization: `Bearer ${localStorage.getItem('adminToken') || ''}` } }),
+      fetch('/api/admin/orders', { headers: { Authorization: `Bearer ${token}` } }),
+      fetch('/api/admin/users', { headers: { Authorization: `Bearer ${token}` } }),
     ])
-    if (ordersRes.ok) setOrders(await ordersRes.json().then(d => d.orders))
+    if (ordersRes.ok) setOrders(await ordersRes.json().then((d: { orders: Order[] }) => d.orders))
     if (usersRes.ok) {
       const data = await usersRes.json()
       setUsers(data.users)
@@ -71,23 +74,21 @@ export default function AdminPage() {
   }, [])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (!data.user) { router.push('/'); return }
-      // Store session token for API calls
-      supabase.auth.getSession().then(({ data: s }) => {
-        if (s.session?.access_token) {
-          localStorage.setItem('adminToken', s.session.access_token)
-          fetchData()
-        }
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) { router.push('/'); return }
+      supabase.from('profiles').select('role').eq('id', session.user.id).single().then(({ data: profile }) => {
+        if (profile?.role !== 'admin') { router.push('/'); return }
+        fetchData()
       })
     })
   }, [router, fetchData])
 
   const updateRole = async (userId: string, newRole: string) => {
     setActionLoading(userId)
+    const { data: { session } } = await supabase.auth.getSession()
     await fetch('/api/admin/users', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('adminToken') || ''}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
       body: JSON.stringify({ userId, role: newRole }),
     })
     await fetchData()
@@ -96,9 +97,10 @@ export default function AdminPage() {
 
   const assignOrder = async (orderId: string, resellerId: string) => {
     setActionLoading(orderId)
+    const { data: { session } } = await supabase.auth.getSession()
     await fetch('/api/admin/orders', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('adminToken') || ''}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
       body: JSON.stringify({ orderId, assignedTo: resellerId || null }),
     })
     await fetchData()
@@ -108,9 +110,10 @@ export default function AdminPage() {
   const deleteUser = async (userId: string) => {
     if (!confirm('Delete this user? This cannot be undone.')) return
     setActionLoading(userId)
+    const { data: { session } } = await supabase.auth.getSession()
     await fetch(`/api/admin/users?userId=${userId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${localStorage.getItem('adminToken') || ''}` },
+      headers: { Authorization: `Bearer ${session?.access_token}` },
     })
     await fetchData()
     setActionLoading(null)
@@ -195,7 +198,6 @@ export default function AdminPage() {
         {/* ORDERS TAB */}
         {tab === 'orders' && (
           <div>
-            {/* Filter */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
               {['all', 'pending_payment', 'paid', 'label_ready', 'cancelled'].map(f => (
                 <button key={f} onClick={() => setStatusFilter(f)} style={{
@@ -226,7 +228,6 @@ export default function AdminPage() {
                       borderRadius: 12, padding: '16px 20px', display: 'flex',
                       alignItems: 'center', gap: 14, flexWrap: 'wrap'
                     }}>
-                      {/* Info */}
                       <div style={{ flex: 1, minWidth: 200 }}>
                         <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 3 }}>
                           {order.recipient_name} — {order.recipient_city}, {order.recipient_country}
@@ -236,17 +237,14 @@ export default function AdminPage() {
                         </div>
                       </div>
 
-                      {/* Price */}
                       <span style={{ fontSize: 15, fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)' }}>
                         ${order.price_usd.toFixed(2)}
                       </span>
 
-                      {/* Status badge */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, background: cfg.bg, color: cfg.color, fontSize: 12, fontWeight: 500 }}>
                         {cfg.icon} {cfg.label}
                       </div>
 
-                      {/* Assign to reseller */}
                       <div style={{ position: 'relative' }}>
                         <select
                           value={order.assigned_to || ''}
@@ -255,7 +253,7 @@ export default function AdminPage() {
                           style={{
                             padding: '6px 28px 6px 10px', borderRadius: 7,
                             background: 'var(--bg-elevated)', border: '1px solid var(--border-bright)',
-                            color: order.assigned_to ? '#8B5CF6' : 'var(--text-muted)',
+                            color: assignedReseller ? '#8B5CF6' : 'var(--text-muted)',
                             fontSize: 12, cursor: 'pointer', appearance: 'none', minWidth: 130
                           }}>
                           <option value="">Unassigned</option>
@@ -266,7 +264,6 @@ export default function AdminPage() {
                         <ChevronDown size={12} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
                       </div>
 
-                      {/* Download label */}
                       {order.label_url && (
                         <a href={order.label_url} target="_blank" rel="noopener noreferrer" style={{
                           display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px',
@@ -300,14 +297,12 @@ export default function AdminPage() {
                   borderRadius: 12, padding: '16px 20px', display: 'flex',
                   alignItems: 'center', gap: 14, flexWrap: 'wrap'
                 }}>
-                  {/* Avatar */}
                   <div style={{ width: 38, height: 38, background: 'var(--bg-elevated)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-muted)' }}>
                       {user.email?.[0]?.toUpperCase()}
                     </span>
                   </div>
 
-                  {/* Info */}
                   <div style={{ flex: 1, minWidth: 180 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>{user.email}</div>
                     <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
@@ -315,12 +310,10 @@ export default function AdminPage() {
                     </div>
                   </div>
 
-                  {/* Role badge */}
                   <div style={{ padding: '4px 10px', borderRadius: 6, background: roleCfg.bg, color: roleCfg.color, fontSize: 12, fontWeight: 600 }}>
                     {roleCfg.label}
                   </div>
 
-                  {/* Change role */}
                   <div style={{ position: 'relative' }}>
                     <select
                       value={user.role}
@@ -338,7 +331,6 @@ export default function AdminPage() {
                     <UserCog size={12} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
                   </div>
 
-                  {/* Delete */}
                   <button onClick={() => deleteUser(user.id)} disabled={actionLoading === user.id} style={{
                     padding: '7px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)',
                     borderRadius: 7, color: '#EF4444', cursor: 'pointer', display: 'flex', alignItems: 'center'
