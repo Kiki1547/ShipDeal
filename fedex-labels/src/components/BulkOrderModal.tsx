@@ -87,7 +87,7 @@ export default function BulkOrderModal({ isOpen, onClose, userId }: BulkOrderMod
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
-      if (data.url) window.location.href = data.url
+      if (data.url) { const url = data.url; setTimeout(() => { window.location.href = url }, 0) }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Checkout failed')
       setLoading(false)
