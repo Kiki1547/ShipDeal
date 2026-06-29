@@ -72,26 +72,13 @@ export default function AdminPage() {
   }, [])
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!session) {
-        setStatus('unauthorized')
-        return
-      }
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', session.user.id)
-        .single()
-
-      if (profile?.role === 'admin') {
-        setStatus('authorized')
-        fetchData(session.access_token)
-      } else {
-        setStatus('unauthorized')
-      }
-    })
-    return () => subscription.unsubscribe()
-  }, [fetchData])
+  setStatus('authorized')
+  const run = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session) fetchData(session.access_token)
+  }
+  run()
+}, [fetchData])
 
   useEffect(() => {
     if (status === 'unauthorized') {
