@@ -21,16 +21,31 @@ export async function POST(req: NextRequest) {
     const session = event.data.object as {
       metadata?: { orderId?: string; orderIds?: string; bulk?: string }
       payment_status?: string
+      invoice?: string | null
     }
 
     if (session.payment_status === 'paid') {
       const isBulk = session.metadata?.bulk === 'true'
+      let invoiceUrl: string | null = null
+
+      if (session.invoice) {
+        try {
+          const stripe = getStripe()
+          const invoice = await stripe.invoices.retrieve(session.invoice)
+          invoiceUrl = invoice.hosted_invoice_url || null
+        } catch (err) {
+          console.error('Failed to retrieve invoice:', err)
+        }
+      }
+
+      const updateData: { status: string; invoice_url?: string } = { status: 'paid' }
+      if (invoiceUrl) updateData.invoice_url = invoiceUrl
 
       if (isBulk && session.metadata?.orderIds) {
         const ids = session.metadata.orderIds.split(',')
-        await supabase.from('orders').update({ status: 'paid' }).in('id', ids)
+        await supabase.from('orders').update(updateData).in('id', ids)
       } else if (session.metadata?.orderId) {
-        await supabase.from('orders').update({ status: 'paid' }).eq('id', session.metadata.orderId)
+        await supabase.from('orders').update(updateData).eq('id', session.metadata.orderId)
       }
     }
   }

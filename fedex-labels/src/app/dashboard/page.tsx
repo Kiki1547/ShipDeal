@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import type { User } from '@supabase/supabase-js'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Package, Download, Clock, CheckCircle, XCircle, Plus, ArrowLeft, LogOut, RefreshCw } from 'lucide-react'
+import { Package, Download, Clock, CheckCircle, XCircle, Plus, ArrowLeft, LogOut, RefreshCw, Receipt } from 'lucide-react'
 import OrderModal from '@/components/OrderModal'
 import BulkOrderModal from '@/components/BulkOrderModal'
 
@@ -14,6 +14,7 @@ interface Order {
   price_usd: number
   status: 'pending_payment' | 'paid' | 'label_ready' | 'cancelled'
   label_url: string | null
+  invoice_url: string | null
   recipient_name: string
   recipient_city: string
   recipient_country: string
@@ -174,27 +175,32 @@ export default function DashboardPage() {
             {orders.map(order => {
               const config = STATUS_CONFIG[order.status]
               const date = new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+              const weightDisplay = order.is_bulk
+                ? `Bulk (${order.bulk_recipients?.length ?? '?'} labels)`
+                : (order.weight_kg < 1 ? `${(order.weight_kg * 1000).toFixed(0)}g` : `${order.weight_kg}kg`)
               return (
                 <div key={order.id} style={{
                   background: 'var(--bg-surface)', border: '1px solid var(--border)',
                   borderRadius: 12, padding: '18px 22px',
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   gap: 16, flexWrap: 'wrap', transition: 'border-color 0.2s'
-                }}>
+                }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--border-bright)')}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                     <div style={{ width: 40, height: 40, background: 'var(--bg-elevated)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Package size={17} color="var(--accent)" />
                     </div>
                     <div>
                       <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>
-                        {order.is_bulk ? `Bulk order (${order.bulk_recipients?.length || '?'} labels)` : `${order.recipient_name} — ${order.recipient_city}, ${order.recipient_country}`}
+                        {order.is_bulk ? `Bulk order — ${order.bulk_recipients?.length ?? '?'} recipients` : `${order.recipient_name} — ${order.recipient_city}, ${order.recipient_country}`}
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-                        {order.is_bulk ? 'Multiple recipients' : (order.weight_kg < 1 ? `${(order.weight_kg * 1000).toFixed(0)}g` : `${order.weight_kg}kg`)} · {date} · #{order.id.slice(0, 8).toUpperCase()}
+                        {weightDisplay} · {date} · #{order.id.slice(0, 8).toUpperCase()}
                       </div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 16, fontFamily: 'Space Grotesk', fontWeight: 700, color: 'var(--text)' }}>
                       ${order.price_usd.toFixed(2)}
                     </span>
@@ -205,6 +211,16 @@ export default function DashboardPage() {
                     }}>
                       {config.icon} {config.label}
                     </div>
+                    {order.invoice_url && (
+                      <a href={order.invoice_url} target="_blank" rel="noopener noreferrer" style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '7px 14px', background: 'var(--bg-elevated)',
+                        border: '1px solid var(--border-bright)', borderRadius: 7,
+                        color: 'var(--text-muted)', textDecoration: 'none', fontSize: 13, fontWeight: 500
+                      }}>
+                        <Receipt size={13} /> Invoice
+                      </a>
+                    )}
                     {order.label_url && (
                       <a href={order.label_url} target="_blank" rel="noopener noreferrer" style={{
                         display: 'flex', alignItems: 'center', gap: 6,
