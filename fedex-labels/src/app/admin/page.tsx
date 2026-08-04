@@ -107,6 +107,18 @@ export default function AdminPage() {
     fetchData(token)
     setActionLoading(null)
   }
+  
+  const deleteOrder = async (orderId: string) => {
+    if (!confirm('Delete this order? This cannot be undone.')) return
+    setActionLoading(orderId)
+    const token = await getToken()
+    await fetch(`/api/admin/orders/${orderId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    fetchData(token)
+    setActionLoading(null)
+  }
 
   const deleteUser = async (userId: string) => {
     if (!confirm('Delete this user? This cannot be undone.')) return
@@ -265,6 +277,12 @@ export default function AdminPage() {
                           <Download size={12} /> Label
                         </a>
                       )}
+                      <button onClick={() => deleteOrder(order.id)} disabled={actionLoading === order.id} style={{
+                        padding: '6px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)',
+                        borderRadius: 7, color: '#EF4444', cursor: 'pointer', display: 'flex', alignItems: 'center'
+                      }}>
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   )
                 })}
