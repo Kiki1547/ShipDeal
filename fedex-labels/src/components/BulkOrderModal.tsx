@@ -197,7 +197,7 @@ export default function BulkOrderModal({ isOpen, onClose, userId }: BulkOrderMod
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: 'var(--bg-elevated)' }}>
-                    {['Recipient', 'City', 'Country', 'Weight', 'Price'].map(h => (
+                    {['Recipient', 'Address', 'City', 'Country', 'Weight', 'Price'].map(h => (
                       <th key={h} style={{ padding: '8px 12px', fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textAlign: 'left', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
                     ))}
                   </tr>
@@ -206,6 +206,7 @@ export default function BulkOrderModal({ isOpen, onClose, userId }: BulkOrderMod
                   {rows.map((row, i) => (
                     <tr key={i} style={{ borderTop: '1px solid var(--border)', background: row.error ? 'rgba(239,68,68,0.05)' : 'transparent' }}>
                       <td style={{ padding: '8px 12px', fontSize: 13, color: row.error ? '#EF4444' : 'var(--text)' }}>{row.recipient_name}</td>
+                      <td style={{ padding: '8px 12px', fontSize: 13, color: 'var(--text-muted)', maxWidth: 220 }}>{row.recipient_address}</td>
                       <td style={{ padding: '8px 12px', fontSize: 13, color: 'var(--text-muted)' }}>{row.recipient_city}</td>
                       <td style={{ padding: '8px 12px', fontSize: 13, color: 'var(--text-muted)' }}>{row.recipient_country}</td>
                       <td style={{ padding: '8px 12px', fontSize: 13, color: 'var(--text-muted)' }}>
