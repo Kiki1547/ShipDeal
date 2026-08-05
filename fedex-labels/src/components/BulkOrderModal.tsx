@@ -21,11 +21,30 @@ interface Row {
   error?: string
 }
 
+function splitCsvLine(line: string): string[] {
+  const result: string[] = []
+  let cur = ''
+  let inQuotes = false
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (c === '"') {
+      if (inQuotes && line[i + 1] === '"') { cur += '"'; i++ }
+      else inQuotes = !inQuotes
+    } else if (c === ',' && !inQuotes) {
+      result.push(cur); cur = ''
+    } else {
+      cur += c
+    }
+  }
+  result.push(cur)
+  return result
+}
+
 function parseCSV(text: string): Row[] {
-  const lines = text.trim().split('\n')
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''))
+  const lines = text.trim().split(/\r?\n/)
+  const headers = splitCsvLine(lines[0]).map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''))
   return lines.slice(1).map(line => {
-    const values = line.split(',').map(v => v.trim().replace(/"/g, ''))
+    const values = splitCsvLine(line).map(v => v.trim().replace(/^"|"$/g, ''))
     const obj: Record<string, string> = {}
     headers.forEach((h, i) => { obj[h] = values[i] || '' })
     const weight_kg = parseFloat(obj['weight_kg'] || obj['weight'] || '0')
